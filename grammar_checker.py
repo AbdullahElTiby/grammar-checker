@@ -321,83 +321,175 @@ def translate_text(text, target_lang=None):
     return translate_with_gemini(text, target_lang)
 
 
-# ── Keyboard Layout Fix ────────────────────────────────────────────────────────
-
-_ARABIC_TO_ENGLISH = {
-    'ض': 'q', 'ص': 'w', 'ث': 'e', 'ق': 'r', 'ف': 't',
-    'غ': 'y', 'ع': 'u', 'ه': 'i', 'خ': 'o', 'ج': 'p',
-    'ح': '[', 'د': ']', 'ش': 'a', 'س': 's', 'ي': 'd',
-    'ب': 'f', 'ل': 'g', 'ا': 'h', 'أ': 'h', 'إ': 'h', 'آ': 'h',
-    'ت': 'j', 'ن': 'k', 'م': 'l', 'ك': ';', 'ط': "'",
-    'ئ': 'z', 'ء': 'x', 'ؤ': 'c', 'ر': 'v', 'لا': 'b',
-    'ى': 'n', 'ة': 'm', 'و': ',', 'ز': '.', 'ظ': '/',
-    'ذ': '`', '،': ',', '؟': '?', '؛': ';',
-    '٠': '0', '١': '1', '٢': '2', '٣': '3', '٤': '4',
-    '٥': '5', '٦': '6', '٧': '7', '٨': '8', '٩': '9',
-    '~': '`', '}': ']', '{': '[', '"': "'", ':': ';',
-    '>': '.', '<': ',', 'َ': 'a', 'ُ': 'u', 'ِ': 'i',
-}
-
-_ENGLISH_TO_ARABIC = {
-    'q': 'ض', 'w': 'ص', 'e': 'ث', 'r': 'ق', 't': 'ف',
-    'y': 'غ', 'u': 'ع', 'i': 'ه', 'o': 'خ', 'p': 'ج',
-    '[': 'ح', ']': 'د', 'a': 'ش', 's': 'س', 'd': 'ي',
-    'f': 'ب', 'g': 'ل', 'h': 'ا', 'j': 'ت', 'k': 'ن',
-    'l': 'م', ';': 'ك', "'": 'ط', 'z': 'ئ', 'x': 'ء',
-    'c': 'ؤ', 'v': 'ر', 'b': 'لا', 'n': 'ى', 'm': 'ة',
-    ',': 'و', '.': 'ز', '/': 'ظ', '`': 'ذ',
-    '~': 'ذ', '}': 'د', '{': 'ح', '"': 'ط', ':': 'ك',
-}
+# ── Keyboard Layout Fix (Dynamic Windows API) ─────────────────────────────────
 
 import re
+import ctypes
+from ctypes import wintypes
+
 _ARABIC_RE = re.compile(r'[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]')
+_LATIN_RE = re.compile(r'[a-zA-Z]')
+
+_user32 = ctypes.windll.user32
+_kernel32 = ctypes.windll.kernel32
 
 
-def is_arabic_text(text):
-    if not text:
-        return False
-    matches = _ARABIC_RE.findall(text)
-    return len(matches) / max(len(text.replace(' ', '')), 1) > 0.3
+class KeyboardLayout:
+    _cache = {}
+
+    def __init__(self, hkl):
+        self.hkl = hkl
+        self.name = self._get_name(hkl)
+        self.char_to_vk = {}
+        self.vk_to_char_normal = {}
+        self.vk_to_char_shift = {}
+        self._build()
+
+    @staticmethod
+    def _get_name(hkl):
+        lang_id = hkl & 0xFFFF
+        buf = ctypes.create_unicode_buffer(256)
+        _kernel32.GetLocaleInfoW(lang_id, 0x00000002, buf, 256)
+        return buf.value or f"Layout 0x{hkl:X}"
+
+    def _build(self):
+        key_state = (ctypes.c_ubyte * 256)()
+        shift_state = (ctypes.c_ubyte * 256)()
+        shift_state[0x10] = 0x80
+
+        for vk in range(0x08, 0xFF):
+            if vk in (0x0E, 0x0D):
+                continue
+
+            buf = ctypes.create_unicode_buffer(8)
+            ret = _user32.ToUnicodeEx(vk, 0, key_state, buf, 8, 0x04, self.hkl)
+            if ret > 0:
+                ch = buf[:ret]
+                if len(ch) == 1 and ch != '\x00':
+                    self.vk_to_char_normal[vk] = ch
+                    if ch not in self.char_to_vk:
+                        self.char_to_vk[ch] = (vk, 0)
+
+            buf2 = ctypes.create_unicode_buffer(8)
+            ret2 = _user32.ToUnicodeEx(vk, 0, shift_state, buf2, 8, 0x04, self.hkl)
+            if ret2 > 0:
+                ch2 = buf2[:ret2]
+                if len(ch2) == 1 and ch2 != '\x00':
+                    self.vk_to_char_shift[vk] = ch2
+                    if ch2 not in self.char_to_vk:
+                        self.char_to_vk[ch2] = (vk, 1)
+
+    @classmethod
+    def get_all(cls):
+        hkl_list = []
+        num = _user32.GetKeyboardLayoutList(0, None)
+        buf = (ctypes.c_void_p * num)()
+        _user32.GetKeyboardLayoutList(num, buf)
+        for i in range(num):
+            hkl = buf[i] or 0x0409
+            if hkl not in cls._cache:
+                cls._cache[hkl] = cls(hkl)
+            hkl_list.append(cls._cache[hkl])
+        if not hkl_list:
+            hkl = _user32.GetKeyboardLayout(0) or 0x0409
+            if hkl not in cls._cache:
+                cls._cache[hkl] = cls(hkl)
+            hkl_list.append(cls._cache[hkl])
+        return hkl_list
+
+    @classmethod
+    def is_latin(cls, hkl):
+        lang_id = hkl & 0xFFFF
+        primary = lang_id & 0xFF
+        return primary in (0x09, 0x07, 0x0C, 0x13, 0x0A, 0x14, 0x10, 0x19)
+
+    @classmethod
+    def is_arabic(cls, hkl):
+        lang_id = hkl & 0xFFFF
+        primary = lang_id & 0xFF
+        return primary == 0x01
+
+    def matches_text(self, text):
+        matched = 0
+        total = 0
+        for ch in text:
+            if ch.isspace():
+                continue
+            total += 1
+            if ch in self.char_to_vk:
+                matched += 1
+        if total == 0:
+            return 0.0
+        return matched / total
+
+    def convert_to(self, text, target):
+        result = []
+        for ch in text:
+            if ch == ' ':
+                result.append(' ')
+                continue
+            if ch == '\n':
+                result.append('\n')
+                continue
+            vk_info = self.char_to_vk.get(ch)
+            if vk_info is None:
+                result.append(ch)
+                continue
+            vk, shift = vk_info
+            if shift:
+                target_ch = target.vk_to_char_shift.get(vk, ch)
+            else:
+                target_ch = target.vk_to_char_normal.get(vk, ch)
+            result.append(target_ch)
+        return ''.join(result)
 
 
-def is_wrong_layout_english(text):
-    if not text or is_arabic_text(text):
-        return False
-    words = text.split()
-    if len(words) < 1:
-        return False
-    alpha = [ch for ch in text if ch.isalpha()]
-    if len(alpha) < 2:
-        return False
-    mappable = sum(1 for ch in text if ch in _ENGLISH_TO_ARABIC)
-    ratio = mappable / max(len([ch for ch in text if not ch.isspace()]), 1)
-    vowels = sum(1 for ch in text.lower() if ch in 'aeiou')
-    consonants = sum(1 for ch in text.lower() if ch.isalpha() and ch not in 'aeiou')
-    vowel_ratio = vowels / max(vowels + consonants, 1)
-    return ratio > 0.4 and vowel_ratio < 0.25
+def detect_and_convert(text):
+    layouts = KeyboardLayout.get_all()
+    if len(layouts) < 2:
+        return None
 
+    best_source = None
+    best_source_score = 0.0
+    source_is_arabic = bool(_ARABIC_RE.search(text))
 
-def fix_arabic_to_english(text):
-    result = []
-    i = 0
-    while i < len(text):
-        if text[i:i+2] in _ARABIC_TO_ENGLISH:
-            result.append(_ARABIC_TO_ENGLISH[text[i:i+2]])
-            i += 2
-        elif text[i] in _ARABIC_TO_ENGLISH:
-            result.append(_ARABIC_TO_ENGLISH[text[i]])
-            i += 1
-        else:
-            result.append(text[i])
-            i += 1
-    return ''.join(result)
+    for layout in layouts:
+        score = layout.matches_text(text)
+        if score > best_source_score:
+            best_source_score = score
+            best_source = layout
 
+    if best_source_score < 0.3 or best_source is None:
+        return None
 
-def fix_english_to_arabic(text):
-    result = []
-    for ch in text:
-        result.append(_ENGLISH_TO_ARABIC.get(ch, ch))
-    return ''.join(result)
+    if source_is_arabic:
+        targets = [l for l in layouts if KeyboardLayout.is_latin(l.hkl)]
+    else:
+        targets = [l for l in layouts if KeyboardLayout.is_arabic(l.hkl)]
+
+    if not targets:
+        targets = [l for l in layouts if l.hkl != best_source.hkl]
+    if not targets:
+        return None
+
+    best_target = max(targets, key=lambda l: l.matches_text(text))
+
+    has_arabic = bool(_ARABIC_RE.search(text))
+    has_latin = bool(_LATIN_RE.search(text))
+    if has_arabic and has_latin:
+        return None
+
+    converted = best_source.convert_to(text, best_target)
+    if converted == text:
+        return None
+
+    return {
+        "source_name": best_source.name,
+        "target_name": best_target.name,
+        "converted": converted,
+        "source_hkl": best_source.hkl,
+        "target_hkl": best_target.hkl,
+    }
 
 
 # ── Colors ────────────────────────────────────────────────────────────────────
@@ -948,11 +1040,11 @@ class GrammarBubble:
             try: self.win.destroy()
             except: pass
             text_to_fix = self.corrected or self.original
-            if is_arabic_text(text_to_fix):
-                fixed = fix_arabic_to_english(text_to_fix)
-            else:
-                fixed = fix_english_to_arabic(text_to_fix)
-            get_root().after(100, lambda: show_layout_bubble(text_to_fix, fixed))
+            result = detect_and_convert(text_to_fix)
+            src = result["source_name"] if result else ""
+            tgt = result["target_name"] if result else ""
+            fixed = result["converted"] if result else text_to_fix
+            get_root().after(100, lambda: show_layout_bubble(text_to_fix, fixed, src, tgt))
 
         tk.Button(acts, text="⌨  Fix Layout",
                    font=("Segoe UI", 9),
@@ -1229,21 +1321,23 @@ class TranslationBubble:
 
 _active_layout_bubble = None
 
-def show_layout_bubble(original, fixed):
+def show_layout_bubble(original, fixed, source_name="", target_name=""):
     global _active_layout_bubble
     if _active_layout_bubble:
         try: _active_layout_bubble.destroy()
         except: pass
-    _active_layout_bubble = LayoutFixBubble(original, fixed)
+    _active_layout_bubble = LayoutFixBubble(original, fixed, source_name, target_name)
 
 
 class LayoutFixBubble:
     ANIM_STEPS = 12
     ANIM_MS = 12
 
-    def __init__(self, original, fixed):
+    def __init__(self, original, fixed, source_name="", target_name=""):
         self.original = original
         self.fixed = fixed
+        self.source_name = source_name
+        self.target_name = target_name
         self._build()
 
     def _build(self):
@@ -1267,7 +1361,10 @@ class LayoutFixBubble:
 
         hdr = tk.Frame(inner, bg=c["surface"], padx=14, pady=8)
         hdr.pack(fill="x")
-        tk.Label(hdr, text="⌨  Layout Fix",
+        header_text = f"⌨  Layout Fix"
+        if self.source_name and self.target_name:
+            header_text = f"⌨  {self.source_name} → {self.target_name}"
+        tk.Label(hdr, text=header_text,
                  font=("Georgia", 10, "bold"), bg=c["surface"],
                  fg=c["accent2"]).pack(side="left")
         tk.Button(hdr, text="✕", font=("Segoe UI", 9),
