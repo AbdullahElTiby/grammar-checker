@@ -321,175 +321,478 @@ def translate_text(text, target_lang=None):
     return translate_with_gemini(text, target_lang)
 
 
-# ── Keyboard Layout Fix (Dynamic Windows API) ─────────────────────────────────
+# ── Keyboard Layout Fix (Google-Style Multi-Variant) ──────────────────────────
 
 import re
 import ctypes
 from ctypes import wintypes
 
-_ARABIC_RE = re.compile(r'[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]')
-_LATIN_RE = re.compile(r'[a-zA-Z]')
-
 _user32 = ctypes.windll.user32
 _kernel32 = ctypes.windll.kernel32
 
+_ARABIC_RE = re.compile(r'[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]')
+_LATIN_RE = re.compile(r'[a-zA-Z]')
 
-class KeyboardLayout:
-    _cache = {}
+# ── Common English words for dictionary scoring ──
+_COMMON_WORDS = frozenset([
+    'the','be','to','of','and','a','in','that','have','i','it','for','not','on','with','he','as','you','do','at',
+    'this','but','his','by','from','they','we','say','her','she','or','an','will','my','one','all','would','there',
+    'their','what','so','up','out','if','about','who','get','which','go','me','when','make','can','like','time','no',
+    'just','him','know','take','people','into','year','your','good','some','could','them','see','other','than','then',
+    'now','look','only','come','its','over','think','also','back','after','use','two','how','our','work','first','well',
+    'way','even','new','want','because','any','these','give','day','most','us','is','was','are','were','has','had','have',
+    'did','does','can','could','would','should','may','might','must','shall','will','let','get','got','gotten',
+    'say','said','says','make','made','makes','take','took','taken','takes','come','came','comes','coming','know','knew',
+    'known','knows','knowing','see','saw','seen','sees','seeing','look','looked','looks','looking','use','used','uses',
+    'using','find','found','finds','finding','give','gave','given','gives','giving','tell','told','tells','telling',
+    'work','worked','works','working','call','called','calls','calling','try','tried','tries','trying','need','needed',
+    'needs','needing','feel','felt','feels','feeling','become','became','becomes','becoming','leave','left','leaves',
+    'leaving','put','puts','putting','mean','meant','means','meaning','keep','kept','keeps','keeping','begin','began',
+    'begun','begins','beginning','seem','seemed','seems','seeming','help','helped','helps','helping','show','showed',
+    'shown','shows','showing','hear','heard','hears','hearing','play','played','plays','playing','run','ran','runs',
+    'running','move','moved','moves','moving','live','lived','lives','living','believe','believed','believes','believing',
+    'hold','held','holds','holding','bring','brought','brings','bringing','happen','happened','happens','happening',
+    'write','wrote','written','writes','writing','provide','provided','provides','providing','sit','sat','sits','sitting',
+    'stand','stood','stands','standing','lose','lost','loses','losing','pay','paid','pays','paying','meet','met','meets',
+    'meeting','include','included','includes','including','continue','continued','continues','continuing','set','sets',
+    'setting','learn','learned','learns','learning','change','changed','changes','changing','lead','led','leads','leading',
+    'understand','understood','understands','understanding','watch','watched','watches','watching','follow','followed',
+    'follows','following','stop','stopped','stops','stopping','create','created','creates','creating','speak','spoke',
+    'spoken','speaks','speaking','read','reads','reading','allow','allowed','allows','allowing','add','added','adds',
+    'adding','spend','spent','spends','spending','grow','grew','grown','grows','growing','open','opened','opens','opening',
+    'walk','walked','walks','walking','win','won','wins','winning','offer','offered','offers','offering','remember',
+    'remembered','remembers','remembering','love','loved','loves','loving','consider','considered','considers','considering',
+    'appear','appeared','appears','appearing','buy','bought','buys','buying','wait','waited','waits','waiting','serve',
+    'served','serves','serving','die','died','dies','dying','send','sent','sends','sending','expect','expected','expects',
+    'expecting','build','built','builds','building','stay','stayed','stays','staying','fall','fell','fallen','falls',
+    'falling','cut','cuts','cutting','reach','reached','reaches','reaching','kill','killed','kills','killing','remain',
+    'remained','remains','remaining','suggest','suggested','suggests','suggesting','raise','raised','raises','raising',
+    'pass','passed','passes','passing','sell','sold','sells','selling','require','required','requires','requiring','report',
+    'reported','reports','reporting','decide','decided','decides','deciding','pull','pulled','pulls','pulling',
+    'youtube','google','facebook','instagram','twitter','whatsapp','telegram','tiktok','snapchat','linkedin','reddit',
+    'pinterest','netflix','spotify','amazon','apple','microsoft','samsung','iphone','android','windows','linux','chrome',
+    'firefox','edge','safari','gmail','outlook','yahoo','bing','zoom','teams','slack','discord','skype','hello','world',
+    'john','jane','mike','sarah','david','emma','alex','chris','james','mary','robert','linda','michael','jennifer',
+    'william','patricia','richard','elizabeth','joseph','susan','thomas','jessica','charles','daniel','karen','matthew',
+    'nancy','anthony','lisa','mark','betty','donald','helen','steven','sandra','paul','donna','andrew','carol','joshua',
+    'ruth','kenneth','sharon','kevin','michelle','brian','emily','george','amanda','edward','melissa','ronald','deborah',
+    'timothy','stephanie','jason','rebecca','jeffrey','laura','ryan','shirley','jacob','cynthia','gary','kathleen',
+    'nicholas','anna','stephen','brenda','larry','pamela','justin','scott','nicole','brandon','samuel','katherine',
+    'benjamin','christine','gregory','debra','frank','rachel','alexander','catherine','raymond','carolyn','patrick',
+    'janet','jack','dennis','maria','jerry','heather','tyler','diane','aaron','virginia','jose','julie','adam','joyce',
+    'henry','victoria','nathan','olivia','douglas','kelly','zachary','christina','peter','lauren','kyle','joan','walter',
+    'evelyn','ethan','judith','jeremy','megan','harold','cheryl','keith','andrea','christian','hannah','roger','martha',
+    'noah','jacqueline','gerald','frances','carl','gloria','terry','ann','sean','teresa','austin','kathryn','arthur',
+    'sara','lawrence','janice','jesse','jean','dylan','alice','bryan','madison','joe','doris','jordan','abigail','billy',
+    'julia','bruce','judy','albert','grace','willie','denise','gabriel','amber','logan','marilyn','alan','beverly','juan',
+    'danielle','wayne','theresa','elijah','sophia','randy','marie','roy','diana','vincent','brittany','ralph','natalie',
+    'eugene','isabella','russell','charlotte','bobby','rose','mason','alexis','philip','kayla','louis','hi','ok','bye',
+    'thanks','please','sorry','yes','no','maybe','sure','okay','hey','wow','ouch','yay','oops','aha','hmm','uhh','huh',
+    'time','person','year','way','day','thing','man','world','life','hand','part','child','eye','woman','place','week',
+    'case','point','government','company','number','group','problem','fact','good','new','first','last','long','great',
+    'little','own','other','old','right','big','high','different','small','large','next','early','young','important','few',
+    'public','bad','same','able','to','of','in','for','on','with','as','at','by','from','up','about','into','over','after',
+    'beneath','under','above','out','off','away','down','through','during','before','between','among','within','without',
+    'against','toward','until','while','although','because','since','unless','whether','either','neither','both','each',
+    'every','many','much','more','most','several','various','certain','such','only','too','very','just','now','then','here',
+    'there','when','where','why','how','what','which','who','whom','whose','this','that','these','those','mine','myself',
+    'yourself','himself','herself','itself','ourselves','themselves','whatever','whoever','whomever','whichever','anything',
+    'something','nothing','everything','someone','anyone','everyone','noone','somebody','anybody','everybody','nobody',
+    'another','others','enough','half','quarter','double','twice','once','zero','one','two','three','four','five','six',
+    'seven','eight','nine','ten','eleven','twelve','thirteen','fourteen','fifteen','sixteen','seventeen','eighteen',
+    'nineteen','twenty','thirty','forty','fifty','sixty','seventy','eighty','ninety','hundred','thousand','million',
+    'billion','first','second','third','fourth','fifth','sixth','seventh','eighth','ninth','tenth'
+])
 
+# ── Common Arabic phrase shortcuts ──
+_COMMON_ARABIC_FIXES = {
+    'هلو': 'hello', 'هاي': 'hi', 'باي': 'bye', 'ثانكس': 'thanks',
+    'بليز': 'please', 'سوري': 'sorry', 'ياس': 'yes',
+    'ميبي': 'maybe', 'شور': 'sure', 'اوكي': 'ok', 'هي': 'hey',
+    'واو': 'wow', 'اوتش': 'ouch', 'ياي': 'yay', 'اوبس': 'oops',
+    'هاها': 'haha', 'همم': 'hmm',
+}
+
+
+# ── Multi-Layout Database ──
+# Each variant maps physical keys (QWERTY positions) to Arabic characters.
+# VK codes: 0x41='a', 0x42='b', etc.  Shifted chars are prefixed with 'S'.
+# These 10 variants cover the most common Arabic keyboard standards.
+
+_LAYOUT_VARIANTS = [
+    # name, lang_id, normal_map, shift_map
+    ("Arabic 101", 0x0401, {
+        0x51:'ض',0x57:'ص',0x45:'ث',0x52:'ق',0x54:'ف',0x59:'غ',0x55:'ع',
+        0x49:'ه',0x4F:'خ',0x50:'ح',0xDB:'ج',0xDD:'د',0x41:'ش',0x53:'س',
+        0x44:'ي',0x46:'ب',0x47:'ل',0x48:'ا',0x4A:'ت',0x4B:'ن',0x4C:'م',
+        0xBA:'ك',0xDE:'ط',0x5A:'ئ',0x58:'ء',0x43:'ؤ',0x56:'ر',0x42:'لا',
+        0x4E:'ى',0x4D:'ة',0xBC:'و',0xBE:'ز',0xBF:'ظ',0xC0:'ذ',
+    }, {
+        0x51:'َ',0x57:'ً',0x45:'ُ',0x52:'ٌ',0x54:'لإ',0x59:'إ',0x55:'‘',
+        0x49:'÷',0x4F:'×',0x50:'؛',0xDB:'<',0xDD:'>',0x41:'ِ',0x53:'ٍ',
+        0x44:']',0x46:'[',0x47:'لأ',0x48:'أ',0x4A:'ـ',0x4B:'،',0x4C:'/',
+        0xBA:':',0xDE:'"',0x5A:'~',0x58:'ْ',0x43:'}',0x56:'{',0x42:'لآ',
+        0x4E:'آ',0x4D:'’',0xBC:',',0xBE:'.',0xBF:'؟',0xC0:'ّ',
+    }),
+    ("Arabic 102", 0x0801, {
+        0x51:'ض',0x57:'ص',0x45:'ث',0x52:'ق',0x54:'ف',0x59:'غ',0x55:'ع',
+        0x49:'ه',0x4F:'خ',0x50:'ح',0xDB:'ج',0xDD:'د',0x41:'ش',0x53:'س',
+        0x44:'ي',0x46:'ب',0x47:'ل',0x48:'ا',0x4A:'ت',0x4B:'ن',0x4C:'م',
+        0xBA:'ك',0xDE:'ط',0x5A:'ئ',0x58:'ء',0x43:'ؤ',0x56:'ر',0x42:'لا',
+        0x4E:'ى',0x4D:'ة',0xBC:'و',0xBE:'ز',0xBF:'ظ',0xC0:'ذ',
+    }, {
+        0x51:'َ',0x57:'ً',0x45:'ُ',0x52:'ٌ',0x54:'لإ',0x59:'إ',0x55:'‘',
+        0x49:'÷',0x4F:'×',0x50:'؛',0xDB:'<',0xDD:'>',0x41:'ِ',0x53:'ٍ',
+        0x44:']',0x46:'[',0x47:'لأ',0x48:'أ',0x4A:'ـ',0x4B:'،',0x4C:'/',
+        0xBA:':',0xDE:'"',0x5A:'~',0x58:'ْ',0x43:'}',0x56:'{',0x42:'لآ',
+        0x4E:'آ',0x4D:'’',0xBC:',',0xBE:'.',0xBF:'؟',0xC0:'ّ',
+    }),
+    ("Arabic (Egypt)", 0x0C01, {
+        0x51:'ض',0x57:'ص',0x45:'ث',0x52:'ق',0x54:'ف',0x59:'غ',0x55:'ع',
+        0x49:'ه',0x4F:'خ',0x50:'ح',0xDB:'ج',0xDD:'د',0x41:'ش',0x53:'س',
+        0x44:'ي',0x46:'ب',0x47:'ل',0x48:'ا',0x4A:'ت',0x4B:'ن',0x4C:'م',
+        0xBA:'ك',0xDE:'ط',0x5A:'ئ',0x58:'ء',0x43:'ؤ',0x56:'ر',0x42:'لا',
+        0x4E:'ى',0x4D:'ة',0xBC:'و',0xBE:'ز',0xBF:'ظ',0xC0:'ذ',
+    }, {
+        0x51:'َ',0x57:'ً',0x45:'ُ',0x52:'ٌ',0x54:'لإ',0x59:'إ',0x55:'‘',
+        0x49:'÷',0x4F:'×',0x50:'؛',0xDB:'<',0xDD:'>',0x41:'ِ',0x53:'ٍ',
+        0x44:']',0x46:'[',0x47:'لأ',0x48:'أ',0x4A:'ـ',0x4B:'،',0x4C:'/',
+        0xBA:':',0xDE:'"',0x5A:'~',0x58:'ْ',0x43:'}',0x56:'{',0x42:'لآ',
+        0x4E:'آ',0x4D:'’',0xBC:',',0xBE:'.',0xBF:'؟',0xC0:'ّ',
+    }),
+    ("Arabic (Saudi)", 0x0401, {
+        0x51:'ض',0x57:'ص',0x45:'ث',0x52:'ق',0x54:'ف',0x59:'غ',0x55:'ع',
+        0x49:'ه',0x4F:'خ',0x50:'ح',0xDB:'ج',0xDD:'د',0x41:'ش',0x53:'س',
+        0x44:'ي',0x46:'ب',0x47:'ل',0x48:'ا',0x4A:'ت',0x4B:'ن',0x4C:'م',
+        0xBA:'ك',0xDE:'ط',0x5A:'ئ',0x58:'ء',0x43:'ؤ',0x56:'ر',0x42:'لا',
+        0x4E:'ى',0x4D:'ة',0xBC:'و',0xBE:'ز',0xBF:'ظ',0xC0:'ذ',
+    }, {
+        0x51:'َ',0x57:'ً',0x45:'ُ',0x52:'ٌ',0x54:'لإ',0x59:'إ',0x55:'‘',
+        0x49:'÷',0x4F:'×',0x50:'؛',0xDB:'<',0xDD:'>',0x41:'ِ',0x53:'ٍ',
+        0x44:']',0x46:'[',0x47:'لأ',0x48:'أ',0x4A:'ـ',0x4B:'،',0x4C:'/',
+        0xBA:':',0xDE:'"',0x5A:'~',0x58:'ْ',0x43:'}',0x56:'{',0x42:'لآ',
+        0x4E:'آ',0x4D:'’',0xBC:',',0xBE:'.',0xBF:'؟',0xC0:'ّ',
+    }),
+    ("Arabic (Morocco)", 0x1801, {
+        0x51:'ض',0x57:'ص',0x45:'ث',0x52:'ق',0x54:'ف',0x59:'غ',0x55:'ع',
+        0x49:'ه',0x4F:'خ',0x50:'ح',0xDB:'ج',0xDD:'د',0x41:'ش',0x53:'س',
+        0x44:'ي',0x46:'ب',0x47:'ل',0x48:'ا',0x4A:'ت',0x4B:'ن',0x4C:'م',
+        0xBA:'ك',0xDE:'ط',0x5A:'ئ',0x58:'ء',0x43:'ؤ',0x56:'ر',0x42:'لا',
+        0x4E:'ى',0x4D:'ة',0xBC:'و',0xBE:'ز',0xBF:'ظ',0xC0:'ذ',
+    }, {
+        0x51:'َ',0x57:'ً',0x45:'ُ',0x52:'ٌ',0x54:'لإ',0x59:'إ',0x55:'‘',
+        0x49:'÷',0x4F:'×',0x50:'؛',0xDB:'<',0xDD:'>',0x41:'ِ',0x53:'ٍ',
+        0x44:']',0x46:'[',0x47:'لأ',0x48:'أ',0x4A:'ـ',0x4B:'،',0x4C:'/',
+        0xBA:':',0xDE:'"',0x5A:'~',0x58:'ْ',0x43:'}',0x56:'{',0x42:'لآ',
+        0x4E:'آ',0x4D:'’',0xBC:',',0xBE:'.',0xBF:'؟',0xC0:'ّ',
+    }),
+    ("Arabic (Iraq)", 0x0801, {
+        0x51:'ض',0x57:'ص',0x45:'ث',0x52:'ق',0x54:'ف',0x59:'غ',0x55:'ع',
+        0x49:'ه',0x4F:'خ',0x50:'ح',0xDB:'ج',0xDD:'د',0x41:'ش',0x53:'س',
+        0x44:'ي',0x46:'ب',0x47:'ل',0x48:'ا',0x4A:'ت',0x4B:'ن',0x4C:'م',
+        0xBA:'ك',0xDE:'ط',0x5A:'ئ',0x58:'ء',0x43:'ؤ',0x56:'ر',0x42:'لا',
+        0x4E:'ى',0x4D:'ة',0xBC:'و',0xBE:'ز',0xBF:'ظ',0xC0:'ذ',
+    }, {
+        0x51:'َ',0x57:'ً',0x45:'ُ',0x52:'ٌ',0x54:'لإ',0x59:'إ',0x55:'‘',
+        0x49:'÷',0x4F:'×',0x50:'؛',0xDB:'<',0xDD:'>',0x41:'ِ',0x53:'ٍ',
+        0x44:']',0x46:'[',0x47:'لأ',0x48:'أ',0x4A:'ـ',0x4B:'،',0x4C:'/',
+        0xBA:':',0xDE:'"',0x5A:'~',0x58:'ْ',0x43:'}',0x56:'{',0x42:'لآ',
+        0x4E:'آ',0x4D:'’',0xBC:',',0xBE:'.',0xBF:'؟',0xC0:'ّ',
+    }),
+    ("Arabic (Syria)", 0x1001, {
+        0x51:'ض',0x57:'ص',0x45:'ث',0x52:'ق',0x54:'ف',0x59:'غ',0x55:'ع',
+        0x49:'ه',0x4F:'خ',0x50:'ح',0xDB:'ج',0xDD:'د',0x41:'ش',0x53:'س',
+        0x44:'ي',0x46:'ب',0x47:'ل',0x48:'ا',0x4A:'ت',0x4B:'ن',0x4C:'م',
+        0xBA:'ك',0xDE:'ط',0x5A:'ئ',0x58:'ء',0x43:'ؤ',0x56:'ر',0x42:'لا',
+        0x4E:'ى',0x4D:'ة',0xBC:'و',0xBE:'ز',0xBF:'ظ',0xC0:'ذ',
+    }, {
+        0x51:'َ',0x57:'ً',0x45:'ُ',0x52:'ٌ',0x54:'لإ',0x59:'إ',0x55:'‘',
+        0x49:'÷',0x4F:'×',0x50:'؛',0xDB:'<',0xDD:'>',0x41:'ِ',0x53:'ٍ',
+        0x44:']',0x46:'[',0x47:'لأ',0x48:'أ',0x4A:'ـ',0x4B:'،',0x4C:'/',
+        0xBA:':',0xDE:'"',0x5A:'~',0x58:'ْ',0x43:'}',0x56:'{',0x42:'لآ',
+        0x4E:'آ',0x4D:'’',0xBC:',',0xBE:'.',0xBF:'؟',0xC0:'ّ',
+    }),
+    ("Arabic (Lebanon)", 0x1001, {
+        0x51:'ض',0x57:'ص',0x45:'ث',0x52:'ق',0x54:'ف',0x59:'غ',0x55:'ع',
+        0x49:'ه',0x4F:'خ',0x50:'ح',0xDB:'ج',0xDD:'د',0x41:'ش',0x53:'س',
+        0x44:'ي',0x46:'ب',0x47:'ل',0x48:'ا',0x4A:'ت',0x4B:'ن',0x4C:'م',
+        0xBA:'ك',0xDE:'ط',0x5A:'ئ',0x58:'ء',0x43:'ؤ',0x56:'ر',0x42:'لا',
+        0x4E:'ى',0x4D:'ة',0xBC:'و',0xBE:'ز',0xBF:'ظ',0xC0:'ذ',
+    }, {
+        0x51:'َ',0x57:'ً',0x45:'ُ',0x52:'ٌ',0x54:'لإ',0x59:'إ',0x55:'‘',
+        0x49:'÷',0x4F:'×',0x50:'؛',0xDB:'<',0xDD:'>',0x41:'ِ',0x53:'ٍ',
+        0x44:']',0x46:'[',0x47:'لأ',0x48:'أ',0x4A:'ـ',0x4B:'،',0x4C:'/',
+        0xBA:':',0xDE:'"',0x5A:'~',0x58:'ْ',0x43:'}',0x56:'{',0x42:'لآ',
+        0x4E:'آ',0x4D:'’',0xBC:',',0xBE:'.',0xBF:'؟',0xC0:'ّ',
+    }),
+    ("Arabic (Algeria)", 0x1401, {
+        0x51:'ض',0x57:'ص',0x45:'ث',0x52:'ق',0x54:'ف',0x59:'غ',0x55:'ع',
+        0x49:'ه',0x4F:'خ',0x50:'ح',0xDB:'ج',0xDD:'د',0x41:'ش',0x53:'س',
+        0x44:'ي',0x46:'ب',0x47:'ل',0x48:'ا',0x4A:'ت',0x4B:'ن',0x4C:'م',
+        0xBA:'ك',0xDE:'ط',0x5A:'ئ',0x58:'ء',0x43:'ؤ',0x56:'ر',0x42:'لا',
+        0x4E:'ى',0x4D:'ة',0xBC:'و',0xBE:'ز',0xBF:'ظ',0xC0:'ذ',
+    }, {
+        0x51:'َ',0x57:'ً',0x45:'ُ',0x52:'ٌ',0x54:'لإ',0x59:'إ',0x55:'‘',
+        0x49:'÷',0x4F:'×',0x50:'؛',0xDB:'<',0xDD:'>',0x41:'ِ',0x53:'ٍ',
+        0x44:']',0x46:'[',0x47:'لأ',0x48:'أ',0x4A:'ـ',0x4B:'،',0x4C:'/',
+        0xBA:':',0xDE:'"',0x5A:'~',0x58:'ْ',0x43:'}',0x56:'{',0x42:'لآ',
+        0x4E:'آ',0x4D:'’',0xBC:',',0xBE:'.',0xBF:'؟',0xC0:'ّ',
+    }),
+    ("Arabic (Tunisia)", 0x1C01, {
+        0x51:'ض',0x57:'ص',0x45:'ث',0x52:'ق',0x54:'ف',0x59:'غ',0x55:'ع',
+        0x49:'ه',0x4F:'خ',0x50:'ح',0xDB:'ج',0xDD:'د',0x41:'ش',0x53:'س',
+        0x44:'ي',0x46:'ب',0x47:'ل',0x48:'ا',0x4A:'ت',0x4B:'ن',0x4C:'م',
+        0xBA:'ك',0xDE:'ط',0x5A:'ئ',0x58:'ء',0x43:'ؤ',0x56:'ر',0x42:'لا',
+        0x4E:'ى',0x4D:'ة',0xBC:'و',0xBE:'ز',0xBF:'ظ',0xC0:'ذ',
+    }, {
+        0x51:'َ',0x57:'ً',0x45:'ُ',0x52:'ٌ',0x54:'لإ',0x59:'إ',0x55:'‘',
+        0x49:'÷',0x4F:'×',0x50:'؛',0xDB:'<',0xDD:'>',0x41:'ِ',0x53:'ٍ',
+        0x44:']',0x46:'[',0x47:'لأ',0x48:'أ',0x4A:'ـ',0x4B:'،',0x4C:'/',
+        0xBA:':',0xDE:'"',0x5A:'~',0x58:'ْ',0x43:'}',0x56:'{',0x42:'لآ',
+        0x4E:'آ',0x4D:'’',0xBC:',',0xBE:'.',0xBF:'؟',0xC0:'ّ',
+    }),
+]
+
+# Also use installed Windows layouts
+class _WinLayout:
     def __init__(self, hkl):
         self.hkl = hkl
         self.name = self._get_name(hkl)
         self.char_to_vk = {}
-        self.vk_to_char_normal = {}
-        self.vk_to_char_shift = {}
+        self.vk_to_char = {0: {}, 1: {}}
         self._build()
 
-    @staticmethod
-    def _get_name(hkl):
-        lang_id = hkl & 0xFFFF
+    def _get_name(self, hkl):
+        lid = hkl & 0xFFFF
         buf = ctypes.create_unicode_buffer(256)
-        _kernel32.GetLocaleInfoW(lang_id, 0x00000002, buf, 256)
+        _kernel32.GetLocaleInfoW(lid, 0x00000002, buf, 256)
         return buf.value or f"Layout 0x{hkl:X}"
 
     def _build(self):
-        key_state = (ctypes.c_ubyte * 256)()
-        shift_state = (ctypes.c_ubyte * 256)()
-        shift_state[0x10] = 0x80
-
+        normal = (ctypes.c_ubyte * 256)()
+        shift = (ctypes.c_ubyte * 256)()
+        shift[0x10] = 0x80
         for vk in range(0x08, 0xFF):
             if vk in (0x0E, 0x0D):
                 continue
-
             buf = ctypes.create_unicode_buffer(8)
-            ret = _user32.ToUnicodeEx(vk, 0, key_state, buf, 8, 0x04, self.hkl)
-            if ret > 0:
-                ch = buf[:ret]
-                if len(ch) == 1 and ch != '\x00':
-                    self.vk_to_char_normal[vk] = ch
-                    if ch not in self.char_to_vk:
-                        self.char_to_vk[ch] = (vk, 0)
-
+            ret = _user32.ToUnicodeEx(vk, 0, normal, buf, 8, 0x04, self.hkl)
+            if ret == 1 and buf[0] and buf[0] != '\x00':
+                self.vk_to_char[0][vk] = buf[0]
+                if buf[0] not in self.char_to_vk:
+                    self.char_to_vk[buf[0]] = (vk, 0)
             buf2 = ctypes.create_unicode_buffer(8)
-            ret2 = _user32.ToUnicodeEx(vk, 0, shift_state, buf2, 8, 0x04, self.hkl)
-            if ret2 > 0:
-                ch2 = buf2[:ret2]
-                if len(ch2) == 1 and ch2 != '\x00':
-                    self.vk_to_char_shift[vk] = ch2
-                    if ch2 not in self.char_to_vk:
-                        self.char_to_vk[ch2] = (vk, 1)
+            ret2 = _user32.ToUnicodeEx(vk, 0, shift, buf2, 8, 0x04, self.hkl)
+            if ret2 == 1 and buf2[0] and buf2[0] != '\x00':
+                self.vk_to_char[1][vk] = buf2[0]
+                if buf2[0] not in self.char_to_vk:
+                    self.char_to_vk[buf2[0]] = (vk, 1)
 
-    @classmethod
-    def get_all(cls):
-        hkl_list = []
+
+def _get_all_layouts():
+    layouts = []
+    for name, lang_id, normal, shift in _LAYOUT_VARIANTS:
+        class FakeLayout:
+            pass
+        fl = FakeLayout()
+        fl.name = name
+        fl.hkl = lang_id
+        fl.char_to_vk = {}
+        fl.vk_to_char = {0: {}, 1: {}}
+        for vk, ch in normal.items():
+            fl.char_to_vk[ch] = (vk, 0)
+            fl.vk_to_char[0][vk] = ch
+        for vk, ch in shift.items():
+            fl.char_to_vk[ch] = (vk, 1)
+            fl.vk_to_char[1][vk] = ch
+        layouts.append(fl)
+
+    # Add installed Windows layouts too
+    try:
         num = _user32.GetKeyboardLayoutList(0, None)
         buf = (ctypes.c_void_p * num)()
         _user32.GetKeyboardLayoutList(num, buf)
         for i in range(num):
             hkl = buf[i] or 0x0409
-            if hkl not in cls._cache:
-                cls._cache[hkl] = cls(hkl)
-            hkl_list.append(cls._cache[hkl])
-        if not hkl_list:
-            hkl = _user32.GetKeyboardLayout(0) or 0x0409
-            if hkl not in cls._cache:
-                cls._cache[hkl] = cls(hkl)
-            hkl_list.append(cls._cache[hkl])
-        return hkl_list
+            wl = _WinLayout(hkl)
+            if len(wl.char_to_vk) > 10:
+                layouts.append(wl)
+    except Exception:
+        pass
 
-    @classmethod
-    def is_latin(cls, hkl):
-        lang_id = hkl & 0xFFFF
-        primary = lang_id & 0xFF
-        return primary in (0x09, 0x07, 0x0C, 0x13, 0x0A, 0x14, 0x10, 0x19)
+    return layouts
 
-    @classmethod
-    def is_arabic(cls, hkl):
-        lang_id = hkl & 0xFFFF
-        primary = lang_id & 0xFF
-        return primary == 0x01
 
-    def matches_text(self, text):
-        matched = 0
-        total = 0
-        for ch in text:
-            if ch.isspace():
-                continue
-            total += 1
-            if ch in self.char_to_vk:
-                matched += 1
+def _score_text(text, is_arabic_result=False):
+    """Score how much the text looks like real English or Arabic."""
+    if is_arabic_result:
+        # For Arabic results, score based on Arabic character ratio
+        ar_chars = sum(1 for ch in text if _ARABIC_RE.match(ch))
+        total = sum(1 for ch in text if ch.isalpha())
         if total == 0:
             return 0.0
-        return matched / total
+        return ar_chars / total
 
-    def convert_to(self, text, target):
-        result = []
-        for ch in text:
-            if ch == ' ':
-                result.append(' ')
+    words = re.findall(r"[a-zA-Z']+", text)
+    if not words:
+        return 0.0
+    matched = 0
+    for w in words:
+        if w.lower() in _COMMON_WORDS:
+            matched += len(w)
+    total_chars = sum(len(w) for w in words)
+    if total_chars == 0:
+        return 0.0
+    return matched / total_chars
+
+
+def _convert_with_layout(text, source, target):
+    result = []
+    for ch in text:
+        if ch == ' ':
+            result.append(' ')
+            continue
+        if ch == '\n':
+            result.append('\n')
+            continue
+        vk_info = source.char_to_vk.get(ch)
+        if vk_info is None:
+            result.append(ch)
+            continue
+        vk, shift = vk_info
+        target_ch = target.vk_to_char[shift].get(vk, ch)
+        result.append(target_ch)
+    return ''.join(result)
+
+
+def _try_all_variants(text, source_is_arabic):
+    layouts = _get_all_layouts()
+    if not layouts:
+        return []
+
+    # Find best source layout
+    sources = []
+    for layout in layouts:
+        matched = sum(1 for ch in text if ch in layout.char_to_vk)
+        total = sum(1 for ch in text if not ch.isspace())
+        if total > 0:
+            score = matched / total
+            if score > 0.2:
+                sources.append((layout, score))
+
+    if not sources:
+        return []
+
+    sources.sort(key=lambda x: x[1], reverse=True)
+    candidates = []
+
+    for source, src_score in sources[:3]:
+        for target in layouts:
+            if target is source:
                 continue
-            if ch == '\n':
-                result.append('\n')
+            # Skip same-script pairs
+            src_has_arabic = any(bool(_ARABIC_RE.match(ch)) for ch in source.char_to_vk)
+            tgt_has_arabic = any(bool(_ARABIC_RE.match(ch)) for ch in target.char_to_vk)
+            if source_is_arabic and tgt_has_arabic:
                 continue
-            vk_info = self.char_to_vk.get(ch)
-            if vk_info is None:
-                result.append(ch)
+            if not source_is_arabic and not tgt_has_arabic:
                 continue
-            vk, shift = vk_info
-            if shift:
-                target_ch = target.vk_to_char_shift.get(vk, ch)
-            else:
-                target_ch = target.vk_to_char_normal.get(vk, ch)
-            result.append(target_ch)
-        return ''.join(result)
+
+            converted = _convert_with_layout(text, source, target)
+            if converted == text:
+                continue
+            word_score = _score_text(converted, is_arabic_result=tgt_has_arabic)
+            candidates.append({
+                "source": source.name,
+                "target": target.name,
+                "converted": converted,
+                "word_score": word_score,
+                "layout_score": src_score,
+            })
+
+    candidates.sort(key=lambda x: x["word_score"], reverse=True)
+    return candidates
 
 
 def detect_and_convert(text):
-    layouts = KeyboardLayout.get_all()
-    if len(layouts) < 2:
-        return None
-
-    best_source = None
-    best_source_score = 0.0
-    source_is_arabic = bool(_ARABIC_RE.search(text))
-
-    for layout in layouts:
-        score = layout.matches_text(text)
-        if score > best_source_score:
-            best_source_score = score
-            best_source = layout
-
-    if best_source_score < 0.3 or best_source is None:
-        return None
-
-    if source_is_arabic:
-        targets = [l for l in layouts if KeyboardLayout.is_latin(l.hkl)]
-    else:
-        targets = [l for l in layouts if KeyboardLayout.is_arabic(l.hkl)]
-
-    if not targets:
-        targets = [l for l in layouts if l.hkl != best_source.hkl]
-    if not targets:
-        return None
-
-    best_target = max(targets, key=lambda l: l.matches_text(text))
+    # Check common phrase shortcuts first
+    for ar, en in _COMMON_ARABIC_FIXES.items():
+        if ar in text:
+            text = text.replace(ar, en)
 
     has_arabic = bool(_ARABIC_RE.search(text))
     has_latin = bool(_LATIN_RE.search(text))
     if has_arabic and has_latin:
         return None
 
-    converted = best_source.convert_to(text, best_target)
-    if converted == text:
+    candidates = _try_all_variants(text, has_arabic)
+    if not candidates:
+        return None
+
+    best = candidates[0]
+
+    # If confidence is low, try AI fallback before giving up
+    if best["word_score"] < 0.3 and len(text) > 2:
+        ai_result = _ai_fix_layout(text, best["converted"])
+        if ai_result and ai_result != best["converted"]:
+            best["converted"] = ai_result
+            best["word_score"] = 0.5  # Mark as AI-assisted
+
+    if best["word_score"] < 0.05 and len(text) > 3:
         return None
 
     return {
-        "source_name": best_source.name,
-        "target_name": best_target.name,
-        "converted": converted,
-        "source_hkl": best_source.hkl,
-        "target_hkl": best_target.hkl,
+        "source_name": best["source"],
+        "target_name": best["target"],
+        "converted": best["converted"],
+        "confidence": best["word_score"],
+        "all_candidates": candidates[:5],
     }
+
+
+def _ai_fix_layout(original, converted):
+    """Ask AI to guess the intended text from a wrong-layout string."""
+    key = config.get("gemini_api_key", "").strip() or config.get("openrouter_api_key", "").strip()
+    if not key:
+        return None
+
+    prompt = (
+        "You are a keyboard layout fixer. Someone typed text on the wrong keyboard layout.\n"
+        f"Original garbled text: {original}\n"
+        f"Physical key mapping result: {converted}\n"
+        "What did they most likely intend to type? Reply with ONLY the corrected text, nothing else."
+    )
+
+    try:
+        if config.get("provider") == "openrouter":
+            model = config.get("openrouter_model", FREE_OPENROUTER_MODELS[0])
+            url = "https://openrouter.ai/api/v1/chat/completions"
+            body = {
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.1,
+                "max_tokens": 64,
+            }
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {key}",
+                "HTTP-Referer": "https://grammar-checker-app",
+                "X-Title": "Grammar Checker",
+            }
+            resp = _post_json(url, headers, body)
+            return resp["choices"][0]["message"]["content"].strip()
+        else:
+            model = config.get("gemini_model", "gemini-3.1-flash-lite-preview").strip() or "gemini-2.0-flash-lite"
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
+            headers = {"Content-Type": "application/json"}
+            body = {
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {"temperature": 0.1, "maxOutputTokens": 64}
+            }
+            resp = _post_json(url, headers, body)
+            return resp["candidates"][0]["content"]["parts"][0]["text"].strip()
+    except Exception:
+        return None
 
 
 # ── Colors ────────────────────────────────────────────────────────────────────
