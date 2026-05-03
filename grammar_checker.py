@@ -61,6 +61,9 @@ COMMON_LANGUAGES = [
     "Czech", "Thai", "Vietnamese", "Indonesian", "Greek", "Hebrew",
 ]
 
+import re
+_ARABIC_RE = re.compile(r'[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]')
+
 GEMINI_MODEL_SUGGESTIONS = [
     "gemini-2.0-flash-lite",
     "gemini-2.0-flash",
@@ -630,6 +633,64 @@ class LoadingWindow:
         except Exception: pass
 
 
+class LanguagePicker:
+    """Small popup to pick target language for translation."""
+
+    def __init__(self, callback):
+        self.callback = callback
+        self._build()
+
+    def _build(self):
+        c = C
+        pt = ctypes.wintypes.POINT()
+        ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
+        cx, cy = pt.x, pt.y
+
+        win = tk.Toplevel()
+        self.win = win
+        win.overrideredirect(True)
+        win.attributes("-topmost", True)
+        win.configure(bg=c["surface"])
+
+        outer = tk.Frame(win, bg=c["accent"], padx=1, pady=1)
+        outer.pack(fill="both", expand=True)
+        inner = tk.Frame(outer, bg=c["bg"])
+        inner.pack(fill="both", expand=True)
+
+        tk.Label(inner, text="Translate to:",
+                 font=("Segoe UI", 9, "bold"), bg=c["bg"],
+                 fg=c["text"]).pack(padx=14, pady=(10, 4), anchor="w")
+
+        lang_var = tk.StringVar(value=config.get("target_language", "English"))
+        lang_cb = ttk.Combobox(inner, textvariable=lang_var,
+                                values=COMMON_LANGUAGES,
+                                font=("Segoe UI", 9), state="readonly")
+        lang_cb.pack(fill="x", padx=14, pady=(0, 10))
+
+        def do_translate():
+            self.win.destroy()
+            self.callback(lang_var.get())
+
+        tk.Button(inner, text="  Translate  ", font=("Segoe UI", 9, "bold"),
+                  bg=c["accent"], fg="white", relief="flat",
+                  padx=16, pady=5, cursor="hand2",
+                  activebackground=c["accent2"],
+                  command=do_translate).pack(pady=(0, 10))
+
+        win.bind("<Escape>", lambda e: self.win.destroy())
+
+        win.update_idletasks()
+        W = win.winfo_reqwidth()
+        H = win.winfo_reqheight()
+        sw = win.winfo_screenwidth()
+        sh = win.winfo_screenheight()
+        x = max(8, min(cx - W // 2, sw - W - 8))
+        y = max(8, min(cy + 16, sh - H - 8))
+        win.geometry(f"{W}x{H}+{x}+{y}")
+        win.deiconify()
+        win.after(50, lang_cb.focus_set)
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def _center(win, w, h):
     win.update_idletasks()
@@ -751,16 +812,22 @@ class GrammarBubble:
         tk.Label(f, text="✓  Looks perfect!",
                  font=("Segoe UI", 11, "bold"), bg=c["bg"], fg=c["green"]).pack(side="left")
 
-        def translate_clean():
-            try: self.win.destroy()
-            except: pass
+        def _do_translate_clean(target_lang):
             loading = LoadingWindow()
             loading.win.children[list(loading.win.children.keys())[0]].configure(text="✦  Translating…")
             def do_translate():
-                result = translate_text(self.original)
+                result = translate_text(self.original, target_lang)
                 get_root().after(0, lambda: (loading.destroy(),
-                    show_translation_bubble(self.original, result)))
+                    show_translation_bubble(self.original, result, target_lang=target_lang)))
             threading.Thread(target=do_translate, daemon=True).start()
+
+        def translate_clean():
+            try: self.win.destroy()
+            except: pass
+            if _ARABIC_RE.search(self.original):
+                _do_translate_clean(config.get("target_language", "English"))
+            else:
+                LanguagePicker(lambda lang: _do_translate_clean(lang))
 
         tk.Button(f, text="🌐  Translate",
                   font=("Segoe UI", 9), bg=c["bg"], fg=c["accent2"],
@@ -854,16 +921,23 @@ class GrammarBubble:
                    activebackground=c["accent2"],
                    command=apply_fix).pack(side="left")
 
-        def translate_text_action():
-            try: self.win.destroy()
-            except: pass
+        def _do_translate(target_lang):
             loading = LoadingWindow()
             loading.win.children[list(loading.win.children.keys())[0]].configure(text="✦  Translating…")
             def do_translate():
-                result = translate_text(self.corrected or self.original)
+                result = translate_text(self.corrected or self.original, target_lang)
                 get_root().after(0, lambda: (loading.destroy(),
-                    show_translation_bubble(self.original, result)))
+                    show_translation_bubble(self.original, result, target_lang=target_lang)))
             threading.Thread(target=do_translate, daemon=True).start()
+
+        def translate_text_action():
+            try: self.win.destroy()
+            except: pass
+            text = self.corrected or self.original
+            if _ARABIC_RE.search(text):
+                _do_translate(config.get("target_language", "English"))
+            else:
+                LanguagePicker(lambda lang: _do_translate(lang))
 
         tk.Button(acts, text="🌐  Translate",
                    font=("Segoe UI", 9),
@@ -949,24 +1023,24 @@ class GrammarBubble:
 
 _active_trans_bubble = None
 
-def show_translation_bubble(original, result):
+def show_translation_bubble(original, result, target_lang=None):
     global _active_trans_bubble
     if _active_trans_bubble:
         try: _active_trans_bubble.destroy()
         except: pass
-    _active_trans_bubble = TranslationBubble(original, result)
+    _active_trans_bubble = TranslationBubble(original, result, target_lang)
 
 
 class TranslationBubble:
     ANIM_STEPS = 12
     ANIM_MS = 12
 
-    def __init__(self, original, result):
+    def __init__(self, original, result, target_lang=None):
         self.original = original
         self.result = result
         self.translated = result.get("translated", original) if "error" not in result else None
         self.detected = result.get("detected_language", "") if "error" not in result else ""
-        self.target_lang = config.get("target_language", "English")
+        self.target_lang = target_lang or config.get("target_language", "English")
         self._build()
 
     def _build(self):
