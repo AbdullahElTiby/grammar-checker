@@ -36,8 +36,13 @@ def ensure_single_instance():
     except OSError:
         return False  # port taken → another instance is running
 
-# ── Config ────────────────────────────────────────────────────────────────────
-CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+# ── Config ───────────────────────────────────────────────────────────────────
+if getattr(sys, 'frozen', False):
+    _config_dir = os.path.join(os.environ.get("APPDATA", ""), "GrammarChecker")
+else:
+    _config_dir = os.path.dirname(os.path.abspath(__file__))
+os.makedirs(_config_dir, exist_ok=True)
+CONFIG_FILE = os.path.join(_config_dir, "config.json")
 DEFAULT_CONFIG = {
     "provider": "gemini",          # "gemini" | "openrouter"
     "gemini_api_key": "",
