@@ -41,7 +41,7 @@ CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.j
 DEFAULT_CONFIG = {
     "provider": "gemini",          # "gemini" | "openrouter"
     "gemini_api_key": "",
-    "gemini_model": "gemini-3.1-flash-lite-preview",
+    "gemini_model": "gemini-2.0-flash-lite",
     "openrouter_api_key": "",
     "openrouter_model": "nvidia/llama-3.1-nemotron-ultra-253b-v1:free",
     "hotkey": "ctrl+shift+g",
@@ -57,7 +57,9 @@ COMMON_LANGUAGES = [
 ]
 
 GEMINI_MODEL_SUGGESTIONS = [
-    "gemini-3.1-flash-lite-preview",
+    "gemini-2.0-flash-lite",
+    "gemini-2.0-flash",
+    "gemini-1.5-flash",
 ]
 
 FREE_OPENROUTER_MODELS = [
@@ -160,7 +162,7 @@ def check_with_gemini(text):
     if not key:
         return {"error": "No Gemini API key. Open Settings and add your key.\nGet one free at: aistudio.google.com"}
 
-    model = config.get("gemini_model", "gemini-3.1-flash-lite-preview").strip() or "gemini-2.0-flash-lite"
+    model = config.get("gemini_model", "gemini-2.0-flash-lite").strip() or "gemini-2.0-flash-lite"
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
     headers = {"Content-Type": "application/json"}
     body = {
@@ -258,7 +260,7 @@ def translate_with_gemini(text, target_lang):
     if not key:
         return {"error": "No Gemini API key. Open Settings and add your key."}
 
-    model = config.get("gemini_model", "gemini-3.1-flash-lite-preview").strip() or "gemini-2.0-flash-lite"
+    model = config.get("gemini_model", "gemini-2.0-flash-lite").strip() or "gemini-2.0-flash-lite"
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
     headers = {"Content-Type": "application/json"}
     prompt = TRANSLATE_PROMPT.format(target_language=target_lang) + text
@@ -319,349 +321,6 @@ def translate_text(text, target_lang=None):
     if config.get("provider") == "openrouter":
         return translate_with_openrouter(text, target_lang)
     return translate_with_gemini(text, target_lang)
-
-
-# ── Keyboard Layout Fix (Google-Style Multi-Variant) ──────────────────────────
-
-import re
-import ctypes
-from ctypes import wintypes
-
-_user32 = ctypes.windll.user32
-_kernel32 = ctypes.windll.kernel32
-
-_ARABIC_RE = re.compile(r'[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]')
-_LATIN_RE = re.compile(r'[a-zA-Z]')
-
-# ── Common English words for dictionary scoring ──
-_COMMON_WORDS = frozenset([
-    'the','be','to','of','and','a','in','that','have','i','it','for','not','on','with','he','as','you','do','at',
-    'this','but','his','by','from','they','we','say','her','she','or','an','will','my','one','all','would','there',
-    'their','what','so','up','out','if','about','who','get','which','go','me','when','make','can','like','time','no',
-    'just','him','know','take','people','into','year','your','good','some','could','them','see','other','than','then',
-    'now','look','only','come','its','over','think','also','back','after','use','two','how','our','work','first','well',
-    'way','even','new','want','because','any','these','give','day','most','us','is','was','are','were','has','had','have',
-    'did','does','can','could','would','should','may','might','must','shall','will','let','get','got','gotten',
-    'say','said','says','make','made','makes','take','took','taken','takes','come','came','comes','coming','know','knew',
-    'known','knows','knowing','see','saw','seen','sees','seeing','look','looked','looks','looking','use','used','uses',
-    'using','find','found','finds','finding','give','gave','given','gives','giving','tell','told','tells','telling',
-    'work','worked','works','working','call','called','calls','calling','try','tried','tries','trying','need','needed',
-    'needs','needing','feel','felt','feels','feeling','become','became','becomes','becoming','leave','left','leaves',
-    'leaving','put','puts','putting','mean','meant','means','meaning','keep','kept','keeps','keeping','begin','began',
-    'begun','begins','beginning','seem','seemed','seems','seeming','help','helped','helps','helping','show','showed',
-    'shown','shows','showing','hear','heard','hears','hearing','play','played','plays','playing','run','ran','runs',
-    'running','move','moved','moves','moving','live','lived','lives','living','believe','believed','believes','believing',
-    'hold','held','holds','holding','bring','brought','brings','bringing','happen','happened','happens','happening',
-    'write','wrote','written','writes','writing','provide','provided','provides','providing','sit','sat','sits','sitting',
-    'stand','stood','stands','standing','lose','lost','loses','losing','pay','paid','pays','paying','meet','met','meets',
-    'meeting','include','included','includes','including','continue','continued','continues','continuing','set','sets',
-    'setting','learn','learned','learns','learning','change','changed','changes','changing','lead','led','leads','leading',
-    'understand','understood','understands','understanding','watch','watched','watches','watching','follow','followed',
-    'follows','following','stop','stopped','stops','stopping','create','created','creates','creating','speak','spoke',
-    'spoken','speaks','speaking','read','reads','reading','allow','allowed','allows','allowing','add','added','adds',
-    'adding','spend','spent','spends','spending','grow','grew','grown','grows','growing','open','opened','opens','opening',
-    'walk','walked','walks','walking','win','won','wins','winning','offer','offered','offers','offering','remember',
-    'remembered','remembers','remembering','love','loved','loves','loving','consider','considered','considers','considering',
-    'appear','appeared','appears','appearing','buy','bought','buys','buying','wait','waited','waits','waiting','serve',
-    'served','serves','serving','die','died','dies','dying','send','sent','sends','sending','expect','expected','expects',
-    'expecting','build','built','builds','building','stay','stayed','stays','staying','fall','fell','fallen','falls',
-    'falling','cut','cuts','cutting','reach','reached','reaches','reaching','kill','killed','kills','killing','remain',
-    'remained','remains','remaining','suggest','suggested','suggests','suggesting','raise','raised','raises','raising',
-    'pass','passed','passes','passing','sell','sold','sells','selling','require','required','requires','requiring','report',
-    'reported','reports','reporting','decide','decided','decides','deciding','pull','pulled','pulls','pulling',
-    'youtube','google','facebook','instagram','twitter','whatsapp','telegram','tiktok','snapchat','linkedin','reddit',
-    'pinterest','netflix','spotify','amazon','apple','microsoft','samsung','iphone','android','windows','linux','chrome',
-    'firefox','edge','safari','gmail','outlook','yahoo','bing','zoom','teams','slack','discord','skype','hello','world',
-    'john','jane','mike','sarah','david','emma','alex','chris','james','mary','robert','linda','michael','jennifer',
-    'william','patricia','richard','elizabeth','joseph','susan','thomas','jessica','charles','daniel','karen','matthew',
-    'nancy','anthony','lisa','mark','betty','donald','helen','steven','sandra','paul','donna','andrew','carol','joshua',
-    'ruth','kenneth','sharon','kevin','michelle','brian','emily','george','amanda','edward','melissa','ronald','deborah',
-    'timothy','stephanie','jason','rebecca','jeffrey','laura','ryan','shirley','jacob','cynthia','gary','kathleen',
-    'nicholas','anna','stephen','brenda','larry','pamela','justin','scott','nicole','brandon','samuel','katherine',
-    'benjamin','christine','gregory','debra','frank','rachel','alexander','catherine','raymond','carolyn','patrick',
-    'janet','jack','dennis','maria','jerry','heather','tyler','diane','aaron','virginia','jose','julie','adam','joyce',
-    'henry','victoria','nathan','olivia','douglas','kelly','zachary','christina','peter','lauren','kyle','joan','walter',
-    'evelyn','ethan','judith','jeremy','megan','harold','cheryl','keith','andrea','christian','hannah','roger','martha',
-    'noah','jacqueline','gerald','frances','carl','gloria','terry','ann','sean','teresa','austin','kathryn','arthur',
-    'sara','lawrence','janice','jesse','jean','dylan','alice','bryan','madison','joe','doris','jordan','abigail','billy',
-    'julia','bruce','judy','albert','grace','willie','denise','gabriel','amber','logan','marilyn','alan','beverly','juan',
-    'danielle','wayne','theresa','elijah','sophia','randy','marie','roy','diana','vincent','brittany','ralph','natalie',
-    'eugene','isabella','russell','charlotte','bobby','rose','mason','alexis','philip','kayla','louis','hi','ok','bye',
-    'thanks','please','sorry','yes','no','maybe','sure','okay','hey','wow','ouch','yay','oops','aha','hmm','uhh','huh',
-    'time','person','year','way','day','thing','man','world','life','hand','part','child','eye','woman','place','week',
-    'case','point','government','company','number','group','problem','fact','good','new','first','last','long','great',
-    'little','own','other','old','right','big','high','different','small','large','next','early','young','important','few',
-    'public','bad','same','able','to','of','in','for','on','with','as','at','by','from','up','about','into','over','after',
-    'beneath','under','above','out','off','away','down','through','during','before','between','among','within','without',
-    'against','toward','until','while','although','because','since','unless','whether','either','neither','both','each',
-    'every','many','much','more','most','several','various','certain','such','only','too','very','just','now','then','here',
-    'there','when','where','why','how','what','which','who','whom','whose','this','that','these','those','mine','myself',
-    'yourself','himself','herself','itself','ourselves','themselves','whatever','whoever','whomever','whichever','anything',
-    'something','nothing','everything','someone','anyone','everyone','noone','somebody','anybody','everybody','nobody',
-    'another','others','enough','half','quarter','double','twice','once','zero','one','two','three','four','five','six',
-    'seven','eight','nine','ten','eleven','twelve','thirteen','fourteen','fifteen','sixteen','seventeen','eighteen',
-    'nineteen','twenty','thirty','forty','fifty','sixty','seventy','eighty','ninety','hundred','thousand','million',
-    'billion','first','second','third','fourth','fifth','sixth','seventh','eighth','ninth','tenth'
-])
-
-# ── Common Arabic phrase shortcuts ──
-_COMMON_ARABIC_FIXES = {
-    'هلو': 'hello', 'هاي': 'hi', 'باي': 'bye', 'ثانكس': 'thanks',
-    'بليز': 'please', 'سوري': 'sorry', 'ياس': 'yes',
-    'ميبي': 'maybe', 'شور': 'sure', 'اوكي': 'ok', 'هي': 'hey',
-    'واو': 'wow', 'اوتش': 'ouch', 'ياي': 'yay', 'اوبس': 'oops',
-    'هاها': 'haha', 'همم': 'hmm',
-}
-
-
-# ── Layout Engine: reads YOUR real Windows keyboard layouts ──────────────────
-
-class _WinLayout:
-    _cache = {}
-
-    def __init__(self, hkl):
-        self.hkl = hkl
-        self.name = self._get_name(hkl)
-        self.char_to_vk = {}
-        self.vk_to_char = {0: {}, 1: {}}
-        self._build()
-
-    def _get_name(self, hkl):
-        lid = hkl & 0xFFFF
-        buf = ctypes.create_unicode_buffer(256)
-        _kernel32.GetLocaleInfoW(lid, 0x00000002, buf, 256)
-        return buf.value or "Layout 0x{:X}".format(hkl)
-
-    def _build(self):
-        normal = (ctypes.c_ubyte * 256)()
-        shift = (ctypes.c_ubyte * 256)()
-        shift[0x10] = 0x80
-        for vk in range(0x08, 0xFF):
-            if vk in (0x0E, 0x0D):
-                continue
-            buf = ctypes.create_unicode_buffer(8)
-            ret = _user32.ToUnicodeEx(vk, 0, normal, buf, 8, 0x04, self.hkl)
-            if ret == 1 and buf[0] and buf[0] != '\x00':
-                self.vk_to_char[0][vk] = buf[0]
-                if buf[0] not in self.char_to_vk:
-                    self.char_to_vk[buf[0]] = (vk, 0)
-            buf2 = ctypes.create_unicode_buffer(8)
-            ret2 = _user32.ToUnicodeEx(vk, 0, shift, buf2, 8, 0x04, self.hkl)
-            if ret2 == 1 and buf2[0] and buf2[0] != '\x00':
-                self.vk_to_char[1][vk] = buf2[0]
-                if buf2[0] not in self.char_to_vk:
-                    self.char_to_vk[buf2[0]] = (vk, 1)
-
-    @classmethod
-    def get_installed(cls):
-        out = []
-        try:
-            num = _user32.GetKeyboardLayoutList(0, None)
-            buf = (ctypes.c_void_p * num)()
-            _user32.GetKeyboardLayoutList(num, buf)
-            for i in range(num):
-                hkl = buf[i] or 0x0409
-                if hkl not in cls._cache:
-                    cls._cache[hkl] = cls(hkl)
-                out.append(cls._cache[hkl])
-        except Exception:
-            pass
-        if not out:
-            hkl = _user32.GetKeyboardLayout(0) or 0x0409
-            if hkl not in cls._cache:
-                cls._cache[hkl] = cls(hkl)
-            out.append(cls._cache[hkl])
-        return out
-
-
-def _get_all_layouts():
-    return _WinLayout.get_installed()
-
-
-def _score_text(text, is_arabic_result=False):
-    """Score how much the text looks like real English or Arabic."""
-    if is_arabic_result:
-        # For Arabic results, score based on Arabic character ratio
-        ar_chars = sum(1 for ch in text if _ARABIC_RE.match(ch))
-        total = sum(1 for ch in text if ch.isalpha())
-        if total == 0:
-            return 0.0
-        return ar_chars / total
-
-    words = re.findall(r"[a-zA-Z']+", text)
-    if not words:
-        return 0.0
-    matched = 0
-    for w in words:
-        if w.lower() in _COMMON_WORDS:
-            matched += len(w)
-    total_chars = sum(len(w) for w in words)
-    if total_chars == 0:
-        return 0.0
-    return matched / total_chars
-
-
-def _convert_with_layout(text, source, target):
-    result = []
-    for ch in text:
-        if ch == ' ':
-            result.append(' ')
-            continue
-        if ch == '\n':
-            result.append('\n')
-            continue
-        vk_info = source.char_to_vk.get(ch)
-        if vk_info is None:
-            result.append(ch)
-            continue
-        vk, shift = vk_info
-        target_ch = target.vk_to_char[shift].get(vk, ch)
-        result.append(target_ch)
-    return ''.join(result)
-
-
-def _try_all_variants(text, source_is_arabic):
-    layouts = _get_all_layouts()
-    if not layouts:
-        return []
-
-    # Find best source layout
-    sources = []
-    for layout in layouts:
-        matched = sum(1 for ch in text if ch in layout.char_to_vk)
-        total = sum(1 for ch in text if not ch.isspace())
-        if total > 0:
-            score = matched / total
-            if score > 0.2:
-                sources.append((layout, score))
-
-    if not sources:
-        return []
-
-    sources.sort(key=lambda x: x[1], reverse=True)
-    candidates = []
-
-    for source, src_score in sources[:3]:
-        for target in layouts:
-            if target is source:
-                continue
-            # Skip same-script pairs
-            src_has_arabic = any(bool(_ARABIC_RE.match(ch)) for ch in source.char_to_vk)
-            tgt_has_arabic = any(bool(_ARABIC_RE.match(ch)) for ch in target.char_to_vk)
-            if source_is_arabic and tgt_has_arabic:
-                continue
-            if not source_is_arabic and not tgt_has_arabic:
-                continue
-
-            converted = _convert_with_layout(text, source, target)
-            if converted == text:
-                continue
-            word_score = _score_text(converted, is_arabic_result=tgt_has_arabic)
-            candidates.append({
-                "source": source.name,
-                "target": target.name,
-                "converted": converted,
-                "word_score": word_score,
-                "layout_score": src_score,
-            })
-
-    candidates.sort(key=lambda x: x["word_score"], reverse=True)
-    return candidates
-
-
-def detect_and_convert(text):
-    original = text
-
-    # Check common phrase shortcuts first
-    shortcuts_applied = False
-    for ar, en in _COMMON_ARABIC_FIXES.items():
-        if ar in text:
-            text = text.replace(ar, en)
-            shortcuts_applied = True
-
-    # If shortcuts completely converted the text, return that
-    if shortcuts_applied and not _ARABIC_RE.search(text):
-        return {
-            "source_name": "Shortcut",
-            "target_name": "English",
-            "converted": text,
-            "confidence": 1.0,
-            "all_candidates": [],
-        }
-
-    has_arabic = bool(_ARABIC_RE.search(text))
-    has_latin = bool(_LATIN_RE.search(text))
-    if has_arabic and has_latin:
-        return None
-
-    candidates = _try_all_variants(text, has_arabic)
-    if not candidates:
-        return None
-
-    best = candidates[0]
-
-    # If confidence is low, try AI fallback before giving up
-    if best["word_score"] < 0.3 and len(text) > 2:
-        ai_result = _ai_fix_layout(original, best["converted"])
-        if ai_result and ai_result != best["converted"]:
-            best["converted"] = ai_result
-            best["word_score"] = 0.5  # Mark as AI-assisted
-
-    if best["word_score"] < 0.05 and len(text) > 3:
-        return None
-
-    return {
-        "source_name": best["source"],
-        "target_name": best["target"],
-        "converted": best["converted"],
-        "confidence": best["word_score"],
-        "all_candidates": candidates[:5],
-    }
-
-
-def _ai_fix_layout(original, converted):
-    """Ask AI to guess the intended text from a wrong-layout string."""
-    key = config.get("gemini_api_key", "").strip() or config.get("openrouter_api_key", "").strip()
-    if not key:
-        return None
-
-    prompt = (
-        "You are a keyboard layout fixer. Someone typed text on the wrong keyboard layout.\n"
-        f"Original garbled text: {original}\n"
-        f"Physical key mapping result: {converted}\n"
-        "What did they most likely intend to type? Reply with ONLY the corrected text, nothing else."
-    )
-
-    try:
-        if config.get("provider") == "openrouter":
-            model = config.get("openrouter_model", FREE_OPENROUTER_MODELS[0])
-            url = "https://openrouter.ai/api/v1/chat/completions"
-            body = {
-                "model": model,
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.1,
-                "max_tokens": 64,
-            }
-            headers = {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {key}",
-                "HTTP-Referer": "https://grammar-checker-app",
-                "X-Title": "Grammar Checker",
-            }
-            resp = _post_json(url, headers, body)
-            return resp["choices"][0]["message"]["content"].strip()
-        else:
-            model = config.get("gemini_model", "gemini-3.1-flash-lite-preview").strip() or "gemini-2.0-flash-lite"
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
-            headers = {"Content-Type": "application/json"}
-            body = {
-                "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {"temperature": 0.1, "maxOutputTokens": 64}
-            }
-            resp = _post_json(url, headers, body)
-            return resp["candidates"][0]["content"]["parts"][0]["text"].strip()
-    except Exception:
-        return None
 
 
 # ── Colors ────────────────────────────────────────────────────────────────────
@@ -853,7 +512,7 @@ class SettingsWindow:
 
         # ── Gemini model ──
         _label(body, "GEMINI MODEL  (type any model name or pick one)")
-        gmodel_var = tk.StringVar(value=config.get("gemini_model", "gemini-3.1-flash-lite-preview"))
+        gmodel_var = tk.StringVar(value=config.get("gemini_model", "gemini-2.0-flash-lite"))
         gmodel_cb = ttk.Combobox(body, textvariable=gmodel_var,
                                   values=GEMINI_MODEL_SUGGESTIONS,
                                   font=("Courier New", 9))
@@ -1208,23 +867,6 @@ class GrammarBubble:
                    activebackground=c["border"],
                    command=translate_text_action).pack(side="left", padx=(6, 0))
 
-        def fix_layout():
-            try: self.win.destroy()
-            except: pass
-            text_to_fix = self.corrected or self.original
-            result = detect_and_convert(text_to_fix)
-            src = result["source_name"] if result else ""
-            tgt = result["target_name"] if result else ""
-            fixed = result["converted"] if result else text_to_fix
-            get_root().after(100, lambda: show_layout_bubble(text_to_fix, fixed, src, tgt))
-
-        tk.Button(acts, text="⌨  Fix Layout",
-                   font=("Segoe UI", 9),
-                   bg=c["surface"], fg=c["accent2"], relief="flat",
-                   padx=10, pady=5, cursor="hand2",
-                   activebackground=c["border"],
-                   command=fix_layout).pack(side="left", padx=(6, 0))
-
         def open_full():
             self._animate_out()
             get_root().after(200, lambda: ResultWindow(self.original, self.result))
@@ -1441,194 +1083,6 @@ class TranslationBubble:
                   padx=10, pady=5, cursor="hand2",
                   activebackground=c["border"],
                   command=self._animate_out).pack(side="right")
-
-    def _ease(self, t):
-        return 1 - (1 - t) ** 3
-
-    def _animate_in(self):
-        if self._step > self.ANIM_STEPS:
-            try:
-                self.win.attributes("-alpha", 1.0)
-                x = self.win.winfo_x()
-                self.win.geometry(f"+{x}+{self._target_y}")
-            except: pass
-            return
-        t = self._ease(self._step / self.ANIM_STEPS)
-        try:
-            self.win.attributes("-alpha", t)
-            x = self.win.winfo_x()
-            y = int(self._start_y + (self._target_y - self._start_y) * t)
-            self.win.geometry(f"+{x}+{y}")
-        except: return
-        self._step += 1
-        self.win.after(self.ANIM_MS, self._animate_in)
-
-    def _animate_out(self):
-        try:
-            if self._auto_id:
-                self.win.after_cancel(self._auto_id)
-        except: pass
-        self._step = self.ANIM_STEPS
-        self._fade_out()
-
-    def _fade_out(self):
-        if self._step < 0:
-            try: self.win.destroy()
-            except: pass
-            return
-        t = self._ease(self._step / self.ANIM_STEPS)
-        try:
-            self.win.attributes("-alpha", t)
-            x = self.win.winfo_x()
-            y = self.win.winfo_y()
-            self.win.geometry(f"+{x}+{y + 2}")
-        except: return
-        self._step -= 1
-        self.win.after(self.ANIM_MS, self._fade_out)
-
-    def destroy(self):
-        try: self.win.destroy()
-        except: pass
-
-
-_active_layout_bubble = None
-
-def show_layout_bubble(original, fixed, source_name="", target_name=""):
-    global _active_layout_bubble
-    if _active_layout_bubble:
-        try: _active_layout_bubble.destroy()
-        except: pass
-    _active_layout_bubble = LayoutFixBubble(original, fixed, source_name, target_name)
-
-
-class LayoutFixBubble:
-    ANIM_STEPS = 12
-    ANIM_MS = 12
-
-    def __init__(self, original, fixed, source_name="", target_name=""):
-        self.original = original
-        self.fixed = fixed
-        self.source_name = source_name
-        self.target_name = target_name
-        self._build()
-
-    def _build(self):
-        c = C
-        self._prev_window = ctypes.windll.user32.GetForegroundWindow()
-        pt = ctypes.wintypes.POINT()
-        ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
-        cx, cy = pt.x, pt.y
-
-        win = tk.Toplevel()
-        self.win = win
-        win.overrideredirect(True)
-        win.attributes("-topmost", True)
-        win.attributes("-alpha", 0.0)
-        win.configure(bg=c["bg"])
-
-        outer = tk.Frame(win, bg=c["accent"], padx=1, pady=1)
-        outer.pack(fill="both", expand=True)
-        inner = tk.Frame(outer, bg=c["bg"], padx=0, pady=0)
-        inner.pack(fill="both", expand=True)
-
-        hdr = tk.Frame(inner, bg=c["surface"], padx=14, pady=8)
-        hdr.pack(fill="x")
-        header_text = f"⌨  Layout Fix"
-        if self.source_name and self.target_name:
-            header_text = f"⌨  {self.source_name} → {self.target_name}"
-        tk.Label(hdr, text=header_text,
-                 font=("Georgia", 10, "bold"), bg=c["surface"],
-                 fg=c["accent2"]).pack(side="left")
-        tk.Button(hdr, text="✕", font=("Segoe UI", 9),
-                  bg=c["surface"], fg=c["muted"], relief="flat",
-                  cursor="hand2", padx=4,
-                  activebackground=c["border"],
-                  command=self._animate_out).pack(side="right")
-
-        body = tk.Frame(inner, bg=c["bg"], padx=14, pady=10)
-        body.pack(fill="x")
-
-        tk.Label(body, text=self.fixed,
-                 font=("Georgia", 10), bg=c["bg"], fg=c["text"],
-                 wraplength=360, justify="left").pack(anchor="w")
-
-        acts = tk.Frame(inner, bg=c["surface"], padx=14, pady=8)
-        acts.pack(fill="x")
-
-        def apply_fix():
-            prev = self._prev_window
-            try: self.win.destroy()
-            except: pass
-            def do_paste():
-                pyperclip.copy(self.fixed)
-                time.sleep(0.25)
-                ctypes.windll.user32.SetForegroundWindow(prev)
-                time.sleep(0.1)
-                keyboard.send("ctrl+v")
-            threading.Thread(target=do_paste, daemon=True).start()
-
-        tk.Button(acts, text="✓  Apply",
-                  font=("Segoe UI", 9, "bold"),
-                  bg=c["accent"], fg="white", relief="flat",
-                  padx=14, pady=5, cursor="hand2",
-                  activebackground=c["accent2"],
-                  command=apply_fix).pack(side="left")
-
-        def copy_fix():
-            pyperclip.copy(self.fixed)
-            copy_btn.configure(text="✓  Copied!", fg=c["green"])
-            win.after(1800, lambda: copy_btn.configure(text="Copy", fg=c["accent2"]))
-
-        copy_btn = tk.Button(acts, text="Copy",
-                              font=("Segoe UI", 9),
-                              bg=c["surface"], fg=c["accent2"], relief="flat",
-                              padx=10, pady=5, cursor="hand2",
-                              activebackground=c["border"],
-                              command=copy_fix)
-        copy_btn.pack(side="left", padx=(6, 0))
-
-        def fix_grammar():
-            try: self.win.destroy()
-            except: pass
-            loading = LoadingWindow()
-            def do_check():
-                result = check_grammar(self.fixed)
-                get_root().after(0, lambda: (loading.destroy(),
-                    show_bubble(self.fixed, result)))
-            threading.Thread(target=do_check, daemon=True).start()
-
-        tk.Button(acts, text="✦  Grammar Check",
-                  font=("Segoe UI", 9),
-                  bg=c["surface"], fg=c["accent2"], relief="flat",
-                  padx=10, pady=5, cursor="hand2",
-                  activebackground=c["border"],
-                  command=fix_grammar).pack(side="left", padx=(6, 0))
-
-        tk.Button(acts, text="Dismiss",
-                  font=("Segoe UI", 9),
-                  bg=c["surface"], fg=c["muted"], relief="flat",
-                  padx=10, pady=5, cursor="hand2",
-                  activebackground=c["border"],
-                  command=self._animate_out).pack(side="right")
-
-        win.update_idletasks()
-        W = win.winfo_reqwidth()
-        H = win.winfo_reqheight()
-        sw = win.winfo_screenwidth()
-        sh = win.winfo_screenheight()
-        x = max(8, min(cx - W // 2, sw - W - 8))
-        y = max(8, min(cy - H - 18, sh - H - 8))
-        self._target_y = y
-        self._start_y = y + 18
-        win.geometry(f"{W}x{H}+{x}+{self._start_y}")
-        win.deiconify()
-
-        self._step = 0
-        self._animate_in()
-        win.bind("<FocusOut>", lambda e: self._animate_out())
-        win.bind("<Escape>", lambda e: self._animate_out())
-        win.after(100, win.focus_force)
-        self._auto_id = win.after(8000, self._animate_out)
 
     def _ease(self, t):
         return 1 - (1 - t) ** 3
